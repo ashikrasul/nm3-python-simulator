@@ -7,6 +7,8 @@ acoustic ping (time-of-flight) command. Requires two physical NM3 modems.
 Example usage:
     python -m examples.ranging_example --serial_port /dev/ttyUSB0 --address 2
     python -m examples.ranging_example --serial_port COM5 --address 2 --count 20 --interval 2.0
+
+    -m examples.ranging_example --serial_port /dev/ttyUSB0 --address 222 --speed_of_sound 350
 """
 
 import argparse

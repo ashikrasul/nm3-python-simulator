@@ -91,7 +91,7 @@ def main():
     publish_port = 8081
 
     # Create and run a Controller in Playback mode
-    log_filename = "SimpleExampleLogs-20240415T104239.json"
+    log_filename = "SimpleExampleLogs-20260824T145325.json"
     print("Starting the Controller")
     controller_process = Process(target=start_controller, args=(network_address, network_port, publish_port,
                                                                 log_filename))

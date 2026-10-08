@@ -44,7 +44,7 @@ def main():
     cmdline_parser.add_argument('--count', type=int, default=0,
                                 help='Number of pings to send. 0 (default) means run until Ctrl-C.')
 
-    cmdline_parser.add_argument('--interval', type=float, default=.50,
+    cmdline_parser.add_argument('--interval', type=float, default=2,
                                 help='Seconds to wait between pings. Default 2.0.')
 
     cmdline_parser.add_argument('--timeout', type=float, default=5.0,

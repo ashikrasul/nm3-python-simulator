@@ -1,0 +1,15 @@
+{
+  "paths":     {"nm3_repo": null},
+  "modem":     {"mode": "sim", "serial_port": "/dev/ttyUSB0", "baud": 9600,
+                "beacon_address": 2, "timeout": 5.0, "speed_of_sound": 1500.0, "tof_scale": 1.0},
+  "ping":      {"interval": 2.0},
+  "geometry":  {"z_s": -2.0, "depth_prior": -30.0},
+  "beacon":    {"true_xyz": [20.0, -15.0, -30.0]},
+  "sim":       {"sigma_rho": 0.5, "seed": 7, "use_gazebo": true},
+  "pose":      {"topic": "/odom", "type": "odometry", "gps_datum": null},
+  "estimator": {"weighted": false, "min_pings": 3},
+  "viz":       {"frame": "odom", "max_circles": 50, "rviz": true},
+  "logging":   {"enabled": true, "dir": "~/nm3_logs", "storage": "sqlite3",
+                "topics": ["/odom", "/cmd_vel", "/tf", "/tf_static", "/nm3/ping",
+                           "/nm3/range", "/nm3/estimate", "/nm3/markers"]}
+}

@@ -58,7 +58,7 @@ Everything after the stream is identical in both modes: `send_ping` → `rho = t
 | file | role |
 |---|---|
 | `nm3_beacon_sim/config.py` | `DEFAULTS` + `load_config()` (deep-merge, rejects unknown keys, validates); `add_repo_to_path()` puts the repo root on `sys.path` so `nm3driver` and `examples.lst_square_loc` import; `make_modem_stream()` |
-| `nm3_beacon_sim/virtual_modem.py` | `VirtualNm3Serial`: `write(b'$Pnnn')` queues the ack and `#RnnnTttttt` with `ticks = round(rho_meas/c_eff/31.25e-6)` clamped to 0..99999; it sends `#TO` if there is no pose. Replies are queued **only after** a write, because send_ping drains input first. Exposes `last_true_range`. |
+| `nm3_beacon_sim/virtual_modem.py` | `VirtualNm3Serial`: `write(b'$Pnnn')` queues the ack at once and starts an in-flight ping. Each `read()` advances the acoustics (see "Acoustic propagation" below). Reply `#RnnnTttttt`, `ticks = round(rho/(c_modem*tof_scale)/31.25e-6)` clamped to 0..99999. `#TO` if there is no pose or after `NM3_RANGE_TIMEOUT = 4 s`. Replies are queued **only after** a write, because send_ping drains input first. Diagnostics: `last_true_range = (d1+d2)/2`, `last_d1/d2`, `last_pose`, `last_recv_pose`, `last_rtt`. The `clock` argument is injectable (tests use a fake clock). |
 | `nm3_beacon_sim/geometry.py` | `horizontal_radius(rho, dz2)`; `circle_points`; `circle_intersections` (returns the closest-approach point when noisy circles miss) |
 | `nm3_beacon_sim/pinger_node.py` | the main node (see below) |
 | `nm3_beacon_sim/bag_to_csv.py` | `ros2 run nm3_beacon_sim bag_to_csv <run_dir> [--solve]` → `pings.csv`; `--solve` re-runs LS using the run's `config.json` |
@@ -71,8 +71,20 @@ Everything after the stream is identical in both modes: `send_ping` → `rho = t
 | `rviz/beacon.rviz` | fixed frame `odom`; MarkerArray `/nm3/markers`, TF, Odometry (off), 10 m grid |
 | `test/test_pipeline.py` | ROS-free pytest: VirtualNm3Serial through the real `Nm3.send_ping`, noise statistics, circle intersection, LS convergence |
 
+### Acoustic propagation (virtual modem, `sim.propagation_delay: true`, default)
+Real-time two-way travel using the live vessel pose:
+```
+t_emit = t_send + d1/c_true + beacon_turnaround      d1 = |p_send - b|   (p = (x, y, z_s))
+t_recv = t_emit + d2/c_true                           d2 = |p(t_recv) - b|, evaluated when read() sees now >= t_recv
+rho_reported = c_modem * (t_recv - t_send)/2 + N(0, sigma) = (c_modem/c_true)(d1+d2)/2 + c_modem*turnaround/2 + noise
+```
+- `send_ping` really blocks for about `2d/c` (around 50 ms at 37 m).
+- `true_speed_of_sound` (default = `modem.speed_of_sound`) models sound-speed error.
+- `beacon_turnaround` (default 0, the user's assumption) models an uncompensated beacon delay.
+- `propagation_delay: false` restores the old instantaneous reply (static vessel, d1 = d2).
+
 ### `pinger_node` behaviour
-- **Ping loop:** pinging runs in a **worker thread**, because a real `send_ping` can block for up to `modem.timeout` and must not stall the pose callbacks. Pings are paced start-to-start every `ping.interval`, resyncing after an overrun. The pose is snapshotted at send time. A failed ping (`-1`) is logged and skipped. Any exception is caught per cycle so the loop never dies.
+- **Ping loop:** pinging runs in a **worker thread**, because a real `send_ping` can block for up to `modem.timeout` and must not stall the pose callbacks. Pings are paced start-to-start every `ping.interval`, resyncing after an overrun. The pose is snapshotted at send and again when `send_ping` returns (receive). LS uses `estimator.position` (`midpoint` by default, also `send`/`receive`), because rho is approximately the mean of both legs, which is approximately |p_mid − b|. This works the same with real modems. A failed ping (`-1`) is logged and skipped. Any exception is caught per cycle so the loop never dies.
 - **Estimation stages:**
   - **n = 1:** one circle at `depth_prior`.
   - **n ≥ 2 without a fix:** circles plus candidate points from the intersection of the first and latest circles (widest baseline).
@@ -82,7 +94,7 @@ Everything after the stream is identical in both modes: `send_ping` → `rho = t
   - `/nm3/range` (Float64)
   - `/nm3/estimate` (PointStamped)
   - `/nm3/ping` (Float64MultiArray, one per ping)
-- **`/nm3/ping` layout** (`PING_FIELDS`, also in `layout.dim[0].label`): `t_send, x, y, z_s, tof, rho_meas, rho_true(NaN when real or failed), ok, est_x, est_y, est_z, cond`.
+- **`/nm3/ping` layout** (`PING_FIELDS`, also in `layout.dim[0].label`): `t_send, x, y, z_s, tof, rho_meas, rho_true(NaN when real or failed), ok, est_x, est_y, est_z, cond, t_recv, x_recv, y_recv, x_used, y_used` (x, y = send pose). New fields are appended so old bags still parse; `bag_to_csv --solve` uses `x_used/y_used` when present.
 
 ### Logging (rosbag2)
 - Turn it on with `logging.enabled`, or override per run with `record:=true|false`.
@@ -103,7 +115,9 @@ python3 -m pytest -q src/nm3_beacon_sim/test                   # no ROS needed
 - Headless test pattern: a copy of `sim.json` with `viz.rviz=false` and `logging.dir` in a temp folder, plus `gui:=false`. Drive with `ros2 topic pub -r 10 /cmd_vel geometry_msgs/msg/Twist "{linear: {x: 3.0}, angular: {z: 0.25}}"`. Write output to files, not pipes, because SIGINT through pipes swallows output. The agent must move in **both x and y** before LS can produce a fix.
 
 ## Known limitations and open items
-- **Pings are instantaneous in simulation.** The virtual modem replies immediately; the range is only encoded as a ToF value. The agent does not move during the ping (two-way travel `2ρ/c`, about 67 ms at 50 m), and the send pose is used for the whole measurement. The physically correct position is roughly the midpoint of the send and receive poses. This is negligible at 50 m and 1–3 m/s, but becomes a bias at km ranges or higher speeds. A beacon turnaround delay `t` would add `c·t/2` to every range. **Offered, not built:** an optional realistic-timing mode (hold the reply for `2ρ/c + turnaround`, use outgoing and return legs, record send and receive poses, optional midpoint position in LS).
+- **Propagation delay is modelled** (since 2026-10-08), as described above.
+  - The beacon is assumed to reply on a single straight path with constant sound speed: no ray bending, multipath or outliers.
+  - The pose is sampled from `/odom` (now 50 Hz in `agent.sdf`), so send/receive poses are quantised to about 20 ms.
 - **NM3 ToF convention is unverified** (one-way vs round-trip). Before using real data, range over a known baseline. If the time is round-trip, set `modem.tof_scale: 0.5`. The virtual modem encodes with `c * tof_scale`, so sim and real stay consistent.
 - The real-hardware path (`serial` mode, NavSatFix → ENU, real timeouts) has not been run against actual modems yet.
 - `ros2 bag play` inside the launch gets no keyboard input. Pause and resume with `ros2 service call /rosbag2_player/pause rosbag2_interfaces/srv/Pause` (and `/resume`).

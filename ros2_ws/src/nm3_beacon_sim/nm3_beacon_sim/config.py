@@ -11,9 +11,13 @@ DEFAULTS = {
     "ping":      {"interval": 2.0},
     "geometry":  {"z_s": -2.0, "depth_prior": -30.0},
     "beacon":    {"true_xyz": None},
-    "sim":       {"sigma_rho": 0.5, "seed": 7, "use_gazebo": True},
+    "sim":       {"sigma_rho": 0.5, "seed": 7, "use_gazebo": True,
+                  "propagation_delay": True,        # hold the reply for the real acoustic travel time
+                  "true_speed_of_sound": None,      # speed sound actually travels at; None = modem.speed_of_sound
+                  "beacon_turnaround": 0.0},        # uncompensated beacon reply delay [s]
     "pose":      {"topic": "/odom", "type": "odometry", "gps_datum": None},
-    "estimator": {"weighted": False, "min_pings": 3},
+    "estimator": {"weighted": False, "min_pings": 3,
+                  "position": "midpoint"},          # ping position used in LS: send | receive | midpoint
     "viz":       {"frame": "odom", "max_circles": 50, "rviz": True},
     "logging":   {"enabled": True, "dir": "~/nm3_logs", "storage": "sqlite3",
                   "topics": ["/odom", "/cmd_vel", "/tf", "/tf_static", "/nm3/ping",
@@ -58,6 +62,10 @@ def load_config(path: str) -> dict:
         raise ConfigError("modem.mode='sim' needs beacon.true_xyz")
     if cfg["pose"]["type"] not in ("odometry", "navsatfix"):
         raise ConfigError("pose.type must be 'odometry' or 'navsatfix'")
+    if cfg["estimator"]["position"] not in ("send", "receive", "midpoint"):
+        raise ConfigError("estimator.position must be 'send', 'receive' or 'midpoint'")
+    if cfg["sim"]["beacon_turnaround"] < 0:
+        raise ConfigError("sim.beacon_turnaround must be >= 0")
     if cfg["estimator"]["min_pings"] < 3:
         raise ConfigError("estimator.min_pings must be >= 3 (unknowns x, y, gamma)")
     cfg["_path"] = os.path.abspath(path)
@@ -93,9 +101,12 @@ def make_modem_stream(cfg: dict, pose_fn):
     if m["mode"] == "sim":
         import numpy as np
         from .virtual_modem import VirtualNm3Serial
+        s = cfg["sim"]
         return VirtualNm3Serial(pose_fn=pose_fn, beacon=cfg["beacon"]["true_xyz"],
-                                z_s=cfg["geometry"]["z_s"], sigma=cfg["sim"]["sigma_rho"],
-                                c=m["speed_of_sound"] * m["tof_scale"],
-                                rng=np.random.default_rng(cfg["sim"]["seed"]))
+                                z_s=cfg["geometry"]["z_s"], sigma=s["sigma_rho"],
+                                c=m["speed_of_sound"], rng=np.random.default_rng(s["seed"]),
+                                tof_scale=m["tof_scale"], c_true=s["true_speed_of_sound"],
+                                turnaround=s["beacon_turnaround"],
+                                propagation_delay=s["propagation_delay"])
     import serial
     return serial.Serial(m["serial_port"], m["baud"], 8, serial.PARITY_NONE, serial.STOPBITS_ONE, 0.1)

@@ -58,11 +58,14 @@ def main():
         cfg = load_config(cfg_path)
         add_repo_to_path(cfg)
         from examples.lst_square_loc import method1_linear_ls
-        R = np.array([r for r in rows if r[PING_FIELDS.index("ok")] > 0.5])
+        width = min(len(r) for r in rows) if rows else 0
+        R = np.array([r[:width] for r in rows if r[PING_FIELDS.index("ok")] > 0.5])
         if len(R) < 3:
             raise SystemExit(f"--solve needs at least 3 successful pings, bag has {len(R)}")
         i = PING_FIELDS.index
-        res = method1_linear_ls(R[:, [i("x"), i("y")]], R[:, i("rho_meas")], cfg["geometry"]["z_s"],
+        # position given to LS live (x_used, y_used); bags recorded before it existed only have x, y
+        xy = [i("x_used"), i("y_used")] if R.shape[1] > i("y_used") else [i("x"), i("y")]
+        res = method1_linear_ls(R[:, xy], R[:, i("rho_meas")], cfg["geometry"]["z_s"],
                                 weighted=cfg["estimator"]["weighted"])
         print(json.dumps({k: (v.tolist() if isinstance(v, np.ndarray) else v) for k, v in res.items()},
                          default=lambda v: v.item(), indent=2))

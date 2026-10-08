@@ -5,7 +5,8 @@ Live localisation of a static underwater beacon from a moving vessel, using the 
 `examples/lst_square_loc.py` (`method1_linear_ls`).
 
 * **Sim:** Gazebo Classic agent driven with `teleop_twist_keyboard`; a virtual NM3 serial port
-  answers `$Pnnn` from the true geometry + N(0, σ) range noise.
+  answers `$Pnnn` from the true geometry + N(0, σ) range noise, after the real acoustic
+  travel time (outgoing leg from the send position, return leg to the moving vessel).
 * **Real:** the same node with the vessel's NM3 on a serial port and GPS for position.
 * **RViz:** range circles at transducer depth, two-circle candidates, LS estimate, true beacon.
 * **rosbag2:** logging, switchable from the config or the launch command.
@@ -44,6 +45,10 @@ ros2 launch nm3_beacon_sim sim.launch.py config_file:=$(ros2 pkg prefix nm3_beac
 | `beacon.true_xyz` | true beacon position (required for sim; `null` for real) |
 | `sim.sigma_rho`, `sim.seed` | range noise std [m] and RNG seed (sim only) |
 | `sim.use_gazebo` | start Gazebo and spawn the agent and beacon |
+| `sim.propagation_delay` | `true`: hold the reply for `d1/c + turnaround + d2/c` in real time, with `d2` to the vessel's position at reception; `false`: instant reply, static vessel |
+| `sim.true_speed_of_sound` | speed the sound actually travels at (`null` = `modem.speed_of_sound`); a mismatch scales every range by `c_modem / c_true` |
+| `sim.beacon_turnaround` | uncompensated beacon reply delay [s]; adds `c * t / 2` to every range (10 ms gives +7.5 m) |
+| `estimator.position` | position given to LS for each ping: `send`, `receive` or `midpoint` (default; the range is the mean of both legs) |
 | `pose.topic`, `pose.type` | `odometry` (`nav_msgs/Odometry`) or `navsatfix` |
 | `pose.gps_datum` | `[lat, lon]` origin for local ENU; `null` = first fix |
 | `estimator.weighted`, `estimator.min_pings` | options passed to `method1_linear_ls` |
@@ -56,7 +61,8 @@ Missing keys fall back to defaults; unknown keys are rejected.
 ## Logs
 Each run creates `<logging.dir>/nm3_YYYYmmdd_HHMMSS/` containing `config.json` and `bag/`.
 `/nm3/ping` carries one row per ping:
-`t_send, x, y, z_s, tof, rho_meas, rho_true, ok, est_x, est_y, est_z, cond`.
+`t_send, x, y, z_s, tof, rho_meas, rho_true, ok, est_x, est_y, est_z, cond, t_recv, x_recv, y_recv, x_used, y_used`
+(`x, y` = pose at send, `*_recv` = pose when the reply arrived, `*_used` = position given to LS).
 ```bash
 ros2 run nm3_beacon_sim bag_to_csv ~/nm3_logs/nm3_<stamp> --solve   # pings.csv + LS re-solve
 ```

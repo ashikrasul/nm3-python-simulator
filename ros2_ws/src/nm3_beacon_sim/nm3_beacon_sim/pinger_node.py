@@ -4,9 +4,14 @@ solve with lst_square_loc.method1_linear_ls, and visualise range circles / estim
 The same node runs against the simulated modem (modem.mode = "sim") or a real NM3 on a serial
 port (modem.mode = "serial"); only the stream handed to Nm3 changes.
 
+The vessel moves while the ping travels, so the pose is sampled at send and at reply; the
+position given to LS is chosen by estimator.position (send | receive | midpoint, default midpoint:
+rho ~ (|p_send - b| + |p_recv - b|) / 2 ~ |p_mid - b|).
+
 /nm3/ping (std_msgs/Float64MultiArray), one message per ping, layout PING_FIELDS:
     t_send, x, y, z_s, tof, rho_meas, rho_true (NaN when real), ok,
-    est_x, est_y, est_z, cond                    (est_* / cond are NaN until an LS fix exists)
+    est_x, est_y, est_z, cond,                   (est_* / cond are NaN until an LS fix exists)
+    t_recv, x_recv, y_recv, x_used, y_used       (x, y = pose at send; *_used = position given to LS)
 """
 import math
 import threading
@@ -25,7 +30,8 @@ from .config import add_repo_to_path, load_config, make_modem_stream
 from .geometry import circle_intersections, circle_points, horizontal_radius
 
 PING_FIELDS = ["t_send", "x", "y", "z_s", "tof", "rho_meas", "rho_true", "ok",
-               "est_x", "est_y", "est_z", "cond"]
+               "est_x", "est_y", "est_z", "cond",
+               "t_recv", "x_recv", "y_recv", "x_used", "y_used"]
 EARTH_R = 6378137.0
 
 
@@ -126,19 +132,29 @@ class PingerNode(Node):
             t_send = time.time()
             try:
                 tof = self.nm3.send_ping(int(m["beacon_address"]), timeout=float(m["timeout"]))
-                self._handle_ping(t_send, pose, tof)
+                t_recv = time.time()
+                self._handle_ping(t_send, pose, t_recv, self._get_pose() or pose, tof)
             except Exception as e:                         # never let one bad ping stop the loop
                 self.get_logger().error(f"ping cycle failed: {e!r}")
 
-    def _handle_ping(self, t_send, pose, tof):
+    def _ping_position(self, p_send, p_recv):
+        mode = self.cfg["estimator"]["position"]
+        if mode == "send":
+            return p_send
+        if mode == "receive":
+            return p_recv
+        return ((p_send[0] + p_recv[0]) / 2, (p_send[1] + p_recv[1]) / 2)
+
+    def _handle_ping(self, t_send, pose, t_recv, pose_recv, tof):
         ok = tof is not None and tof >= 0
+        used = self._ping_position(pose, pose_recv)
         rho = tof * self.c_eff if ok else float("nan")
         rho_true = getattr(self.stream, "last_true_range", float("nan")) if ok else float("nan")
         if ok:
             with self._lock:
-                self.P.append(pose)
+                self.P.append(used)
                 self.rho.append(rho)
-                self.trail.append(pose)
+                self.trail.append(used)
                 n = len(self.P)
                 if n >= self.cfg["estimator"]["min_pings"]:
                     self.res = self._safe_solve(np.asarray(self.P), np.asarray(self.rho))
@@ -154,8 +170,9 @@ class PingerNode(Node):
         if res is not None and res["ok"]:
             self.pub_est.publish(PointStamped(header=self._header(),
                                               point=_pt(*est)))
-        self._publish_ping(t_send, pose, tof if ok else float("nan"), rho, rho_true, ok, est, cond)
-        self._log_ping(n, pose, rho, rho_true, ok, res)
+        self._publish_ping(t_send, pose, tof if ok else float("nan"), rho, rho_true, ok, est, cond,
+                           t_recv, pose_recv, used)
+        self._log_ping(n, used, rho, rho_true, ok, res, t_recv - t_send, math.dist(pose, pose_recv))
         self._publish_markers()
 
     def _safe_solve(self, P, rho):
@@ -168,16 +185,17 @@ class PingerNode(Node):
         except (np.linalg.LinAlgError, ValueError) as e:
             return dict(ok=False, rank=0, cond=float("inf"), msg=f"LS failed: {e}")
 
-    def _publish_ping(self, t_send, pose, tof, rho, rho_true, ok, est, cond):
+    def _publish_ping(self, t_send, pose, tof, rho, rho_true, ok, est, cond, t_recv, pose_recv, used):
         msg = Float64MultiArray()
         msg.layout.dim = [MultiArrayDimension(label=",".join(PING_FIELDS), size=len(PING_FIELDS),
                                               stride=len(PING_FIELDS))]
         msg.data = [float(v) for v in (t_send, pose[0], pose[1], self.z_s, tof, rho, rho_true,
-                                       1.0 if ok else 0.0, *est, cond)]
+                                       1.0 if ok else 0.0, *est, cond,
+                                       t_recv, pose_recv[0], pose_recv[1], used[0], used[1])]
         self.pub_ping.publish(msg)
 
-    def _log_ping(self, n, pose, rho, rho_true, ok, res):
-        s = f"#{n} pos=({pose[0]:.2f},{pose[1]:.2f}) "
+    def _log_ping(self, n, pose, rho, rho_true, ok, res, dt, moved):
+        s = f"#{n} pos=({pose[0]:.2f},{pose[1]:.2f}) dt={dt * 1e3:.0f}ms moved={moved:.2f}m "
         s += f"rho={rho:.2f}m" if ok else "rho=FAIL"
         if math.isfinite(rho_true):
             s += f" (true {rho_true:.2f})"
@@ -298,10 +316,10 @@ class PingerNode(Node):
         if not res["ok"]:
             return f"{n} pings: {res['msg']} - move / turn!"
         e = res["x"]
-        s = f"{n} pings  est=({e[0]:.1f}, {e[1]:.1f}, {e[2]:.1f})  cond={res['cond']:.0f}"
+        s = f"{n} pings  est=({e[0]:.1f}, {e[1]:.1f}, {e[2]:.1f})"
         if self.true_xyz is not None:
-            d = e - self.true_xyz
-            s += f"\n|e|H={math.hypot(d[0], d[1]):.2f} m  |e|z={abs(d[2]):.2f} m"
+            t = self.true_xyz
+            s += f"\ntrue=({t[0]:.1f}, {t[1]:.1f}, {t[2]:.1f})"
         return s
 
     def destroy_node(self):

@@ -7,7 +7,7 @@
   "beacon":    {"true_xyz": null},
   "sim":       {"sigma_rho": 0.0, "seed": 7, "use_gazebo": false},
   "pose":      {"topic": "/fix", "type": "navsatfix", "gps_datum": null},
-  "estimator": {"weighted": false, "min_pings": 3},
+  "estimator": {"weighted": false, "min_pings": 3, "position": "midpoint"},
   "viz":       {"frame": "odom", "max_circles": 50, "rviz": true},
   "logging":   {"enabled": true, "dir": "~/nm3_logs", "storage": "sqlite3",
                 "topics": ["/tf", "/tf_static", "/nm3/ping", "/nm3/range", "/nm3/estimate", "/nm3/markers"]}

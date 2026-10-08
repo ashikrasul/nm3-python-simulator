@@ -28,6 +28,12 @@ Provides the visualisations. https://matplotlib.org/
 
 `pip install matplotlib`
 
+## numpy
+
+Provides the least-squares solver used for trilateration. https://numpy.org/
+
+`pip install numpy`
+
 # Usage
 
 ## Controller
@@ -67,6 +73,14 @@ Connects to the publish port of the controller.
 This will run all the necessary components including Controller, Sensor Nodes and Gateway Node, plus Logger and Visualisation. The network protocol displayed is a simple TDMA wth the Gateway transmitting a Beacon broadcast and the Sensor Node then sending a Unicast duirng their alloted timeslot.  
 
 `D:\nm3-python-simulator>python -m examples.simple_example`
+
+## Trilateration Example
+
+Pings 3 or more remote modems at known (x, y, z) locations and estimates the
+local modem's (x, y) position, given its known depth. Run parameters are
+read from a JSON config file - see `examples/trilateration_config.json`.
+
+`D:\nm3-python-simulator>python -m examples.trilateration_example --config examples/trilateration_config.json`
 
 # Issues
 

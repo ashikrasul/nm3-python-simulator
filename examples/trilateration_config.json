@@ -1,0 +1,13 @@
+{
+  "serial_port": "/dev/ttyUSB0",
+  "speed_of_sound": 350.0,
+  "local_depth": 0.0,
+  "interval": 2.0,
+  "timeout": 5.0,
+  "count": 0,
+  "remote_modems": [
+    {"address": 10, "x": 0.40, "y": 0.25, "z": 0.0},
+    {"address": 20, "x": 0.0, "y": 0.0, "z": 0.0},
+    {"address": 30, "x": 0.40,  "y": 0.0, "z": 0.0}
+  ]
+}
